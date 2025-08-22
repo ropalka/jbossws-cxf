@@ -36,7 +36,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
@@ -572,7 +572,7 @@ public class ProviderImpl extends org.apache.cxf.jaxws22.spi.ProviderImpl
     */
    static final class JBossWSServiceImpl extends ServiceImpl {
 
-      private final ConcurrentMap<Integer, SoftReference<Object>> portsCache = new ConcurrentHashMap<>();
+      private final Map<Integer, SoftReference<Object>> portsCache = new ConcurrentHashMap<>();
 
       public JBossWSServiceImpl(Bus b, URL url, QName name, Class<?> cls, WebServiceFeature ... f) {
          super(b, url, name, cls, f);
@@ -581,27 +581,25 @@ public class ProviderImpl extends org.apache.cxf.jaxws22.spi.ProviderImpl
       @Override
       protected <T> T createPort(final QName portName, final EndpointReferenceType epr, final Class<T> serviceEndpointInterface, final WebServiceFeature... features) {
          final int key = Objects.hash(portName, epr, serviceEndpointInterface, Arrays.hashCode(features));
-         final SoftReference<Object> ref = portsCache.get(key);
+         SoftReference<Object> ref = portsCache.get(key);
          Object port = ref != null ? ref.get() : null;
 
          if (port == null) {
-            final ClassLoader origCL = getContextClassLoader();
-            final ClassLoader newCL = createDelegateClassLoader(origCL, SecurityActions.getClassLoader(ServiceImpl.class));
-            Object newPort;
-            try {
-               setContextClassLoader(newCL);
-               newPort = super.createPort(portName, epr, serviceEndpointInterface, features);
-            } finally {
-               setContextClassLoader(origCL);
-            }
-            setupClient(newPort, serviceEndpointInterface, features);
-
-            final SoftReference<Object> newRef = new SoftReference<>(newPort);
-            final SoftReference<Object> existingRef = portsCache.putIfAbsent(key, newRef);
-            port = existingRef != null ? existingRef.get() : null;
-            if (port == null) {
-               if (existingRef != null) portsCache.put(key, newRef);
-               port = newPort;
+            synchronized (portsCache) {
+               ref = portsCache.get(key);
+               port = ref != null ? ref.get() : null;
+               if (port == null) {
+                  final ClassLoader origCL = getContextClassLoader();
+                  final ClassLoader newCL = createDelegateClassLoader(origCL, SecurityActions.getClassLoader(ServiceImpl.class));
+                  try {
+                     setContextClassLoader(newCL);
+                     port = super.createPort(portName, epr, serviceEndpointInterface, features);
+                  } finally {
+                     setContextClassLoader(origCL);
+                  }
+                  setupClient(port, serviceEndpointInterface, features);
+                  portsCache.put(key, new SoftReference<>(port));
+	       }
             }
          }
          return (T) port;
